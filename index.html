@@ -1,0 +1,120 @@
+index.html
+
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Voice Agent</title>
+</head>
+<body>
+
+<h2>🎤 Voice Agent</h2>
+<button onclick="startApp()">Start Assistant</button>
+
+<script>
+let ws = null;
+let mediaRecorder = null;
+let stream = null;
+let audioQueue = [];
+let isPlaying = false;
+
+
+// 🔊 PLAY AUDIO QUEUE (IMPORTANT FIX)
+function playNext() {
+    if (isPlaying || audioQueue.length === 0) return;
+
+    isPlaying = true;
+
+    const audio = new Audio(audioQueue.shift());
+
+    audio.onended = () => {
+        isPlaying = false;
+        playNext(); // play next in queue
+    };
+
+    audio.play().catch(err => {
+        console.error("❌ Audio play error:", err);
+        isPlaying = false;
+    });
+}
+
+
+// 🚀 START APP
+async function startApp() {
+
+    // 🔊 UNLOCK AUDIO (REQUIRED FOR BROWSERS)
+    const unlock = new Audio();
+    unlock.src = "";
+    unlock.play().catch(()=>{});
+
+    // 🔌 CONNECT WS
+    ws = new WebSocket("ws://localhost:8765");
+
+    ws.onopen = async () => {
+        console.log("✅ Connected");
+        startRecording();
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+
+        if (data.type === "audio") {
+            console.log("🔊 Received audio");
+
+            // ✅ HANDLE BOTH WAV + MP3
+            let mime = "audio/wav"; // intro is wav
+            if (data.data.startsWith("SUQz")) {
+                mime = "audio/mp3"; // mp3 detection
+            }
+
+            const audioSrc = `data:${mime};base64,${data.data}`;
+
+            audioQueue.push(audioSrc);
+            playNext();
+        }
+    };
+
+    ws.onerror = (err) => {
+        console.error("WebSocket error:", err);
+    };
+
+    ws.onclose = () => {
+        console.log("❌ Disconnected");
+    };
+}
+
+
+// 🎤 CONTINUOUS RECORDING
+async function startRecording() {
+
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = async (event) => {
+
+        if (ws.readyState !== WebSocket.OPEN) return;
+
+        const arrayBuffer = await event.data.arrayBuffer();
+
+        const base64Chunk = btoa(
+            new Uint8Array(arrayBuffer)
+                .reduce((data, byte) => data + String.fromCharCode(byte), '')
+        );
+
+        ws.send(JSON.stringify({
+            type: "audio_chunk",
+            data: base64Chunk
+        }));
+
+        console.log("📤 Chunk sent");
+    };
+
+    mediaRecorder.start(300);
+
+    console.log("🎤 Listening...");
+}
+</script>
+
+</body>
+</html>
